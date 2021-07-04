@@ -1,8 +1,86 @@
 *.h5
-*.mp4
 
-# Created by https://www.toptal.com/developers/gitignore/api/windows,linux,macos,vim,python,visualstudiocode
-# Edit at https://www.toptal.com/developers/gitignore?templates=windows,linux,macos,vim,python,visualstudiocode
+# Created by https://www.toptal.com/developers/gitignore/api/vim,linux,macos,python,windows,visualstudiocode,images,video,data
+# Edit at https://www.toptal.com/developers/gitignore?templates=vim,linux,macos,python,windows,visualstudiocode,images,video,data
+
+### Data ###
+*.csv
+*.dat
+*.efx
+*.gbr
+*.key
+*.pps
+*.ppt
+*.pptx
+*.sdf
+*.tax2010
+*.vcf
+*.xml
+
+### Images ###
+# JPEG
+*.jpg
+*.jpeg
+*.jpe
+*.jif
+*.jfif
+*.jfi
+
+# JPEG 2000
+*.jp2
+*.j2k
+*.jpf
+*.jpx
+*.jpm
+*.mj2
+
+# JPEG XR
+*.jxr
+*.hdp
+*.wdp
+
+# Graphics Interchange Format
+*.gif
+
+# RAW
+*.raw
+
+# Web P
+*.webp
+
+# Portable Network Graphics
+*.png
+
+# Animated Portable Network Graphics
+*.apng
+
+# Multiple-image Network Graphics
+*.mng
+
+# Tagged Image File Format
+*.tiff
+*.tif
+
+# Scalable Vector Graphics
+*.svg
+*.svgz
+
+# Portable Document Format
+*.pdf
+
+# X BitMap
+*.xbm
+
+# BMP
+*.bmp
+*.dib
+
+# ICO
+*.ico
+
+# 3D Images
+*.3dm
+*.max
 
 ### Linux ###
 *~
@@ -188,6 +266,24 @@ dmypy.json
 # Cython debug symbols
 cython_debug/
 
+### Video ###
+*.3g2
+*.3gp
+*.asf
+*.asx
+*.avi
+*.flv
+*.mkv
+*.mov
+*.mp4
+*.mpg
+*.ogv
+*.rm
+*.swf
+*.vob
+*.wmv
+*.webm
+
 ### Vim ###
 # Swap
 [._]*.s[a-v][a-z]
@@ -250,4 +346,4 @@ $RECYCLE.BIN/
 # Windows shortcuts
 *.lnk
 
-# End of https://www.toptal.com/developers/gitignore/api/windows,linux,macos,vim,python,visualstudiocode
+# End of https://www.toptal.com/developers/gitignore/api/vim,linux,macos,python,windows,visualstudiocode,images,video,data
