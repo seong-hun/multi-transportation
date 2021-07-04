@@ -7,7 +7,7 @@ import mpl_toolkits.mplot3d.axes3d as axes3d
 from matplotlib.patches import Circle
 
 import fym.logging as logging
-from fym.utils import rot
+from fym.utils.rot import angle2dcm, dcm2angle, sph2cart2
 
 
 class OrnsteinUhlenbeckNoise:
@@ -44,6 +44,17 @@ def hardupdate(target, behavior):
             behavior.parameters()
     ):
         targetParam.data.copy_(behaviorParam.data)
+
+
+def angle2R(*angles):
+    """angles: phi, theta, psi"""
+    return angle2dcm(*angles[::-1]).T
+
+
+def R2angle(R):
+    """angles: phi, theta, psi"""
+    return dcm2angle(R.T)[::-1]
+
 
 def hat(v):
     v1, v2, v3 = v.squeeze()

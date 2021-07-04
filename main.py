@@ -2,24 +2,27 @@ import numpy as np
 import random
 from types import SimpleNamespace as SN
 from pathlib import Path
-
 from tqdm import tqdm
 from datetime import datetime
-from collections import deque
 from matplotlib import pyplot as plt
-import torch
-import torch.nn as nn
-import torch.optim as optim
 
-import fym.logging as logging
+import torch
+
+import fym
 from fym.utils import rot
+
+import envs
+import config
+from agents import DDPG
 from dynamics import MultiQuadSlungLoad
-from utils import draw_plot, compare_episode, hardupdate, softupdate, \
-    OrnsteinUhlenbeckNoise
+from utils import draw_plot, compare_episode, OrnsteinUhlenbeckNoise
 
 torch.manual_seed(0)
 np.random.seed(0)
 random.seed(0)
+
+cfg = config.load()
+
 
 def load_config():
     cfg = SN()
@@ -104,130 +107,6 @@ def load_config():
     return cfg
 
 
-class ActorNet(nn.Module):
-    def __init__(self, cfg):
-        super(ActorNet, self).__init__()
-        self.lin1 = nn.Linear(cfg.ddpg.state_dim, 32)
-        self.lin2 = nn.Linear(32, 64)
-        self.lin3 = nn.Linear(64, 128)
-        self.lin4 = nn.Linear(128, 64)
-        self.lin5 = nn.Linear(64, 32)
-        self.lin6 = nn.Linear(32, 16)
-        self.lin7 = nn.Linear(16, cfg.ddpg.action_dim)
-        self.relu = nn.ReLU()
-        self.tanh = nn.Tanh()
-        self.cfg = cfg
-
-    def forward(self, state):
-        x1 = self.relu(self.lin1(state))
-        x2 = self.relu(self.lin2(x1))
-        x3 = self.relu(self.lin3(x2))
-        x4 = self.relu(self.lin4(x3))
-        x5 = self.relu(self.lin5(x4))
-        x6 = self.relu(self.lin6(x5))
-        x7 = self.tanh(self.lin7(x6))
-        x_scaled = x7 * self.cfg.ddpg.action_scaling \
-            + self.cfg.ddpg.action_bias
-        return x_scaled
-
-class CriticNet(nn.Module):
-    def __init__(self, cfg):
-        super(CriticNet, self).__init__()
-        self.lin1 = nn.Linear(cfg.ddpg.state_dim+cfg.ddpg.action_dim, 32)
-        self.lin2 = nn.Linear(32, 64)
-        self.lin3 = nn.Linear(64, 128)
-        self.lin4 = nn.Linear(128, 64)
-        self.lin5 = nn.Linear(64, 32)
-        self.lin6 = nn.Linear(32, 16)
-        self.lin7 = nn.Linear(16, 1)
-        self.relu = nn.ReLU()
-
-    def forward(self, state_w_action):
-        x1 = self.relu(self.lin1(state_w_action))
-        x2 = self.relu(self.lin2(x1))
-        x3 = self.relu(self.lin3(x2))
-        x4 = self.relu(self.lin4(x3))
-        x5 = self.relu(self.lin5(x4))
-        x6 = self.relu(self.lin6(x5))
-        x7 = self.relu(self.lin7(x6))
-        return x7
-
-
-class DDPG:
-    def __init__(self, cfg):
-        self.memory = deque(maxlen=cfg.ddpg.memory_size)
-        self.behavior_actor = ActorNet(cfg).float()
-        self.behavior_critic = CriticNet(cfg).float()
-        self.target_actor = ActorNet(cfg).float()
-        self.target_critic = CriticNet(cfg).float()
-        self.actor_optim = optim.Adam(
-            self.behavior_actor.parameters(), lr=cfg.ddpg.actor_lr
-        )
-        self.critic_optim = optim.Adam(
-            self.behavior_critic.parameters(), lr=cfg.ddpg.critic_lr
-        )
-        self.mse = nn.MSELoss()
-        hardupdate(self.target_actor, self.behavior_actor)
-        hardupdate(self.target_critic, self.behavior_critic)
-        self.cfg = cfg
-
-    def get_action(self, state, net="behavior"):
-        with torch.no_grad():
-            action = self.behavior_actor(torch.FloatTensor(state)) \
-                if net == "behavior" \
-                else self.target_actor(torch.FloatTensor(state))
-        return np.array(np.squeeze(action))
-
-    def memorize(self, item):
-        self.memory.append(item)
-
-    def get_sample(self):
-        sample = random.sample(self.memory, self.cfg.ddpg.batch_size)
-        state, action, reward, state_next, epi_done = zip(*sample)
-        x = torch.tensor(state, requires_grad=True).float()
-        u = torch.tensor(action, requires_grad=True).float()
-        r = torch.tensor(reward, requires_grad=True).float()
-        xn = torch.tensor(state_next, requires_grad=True).float()
-        done = torch.tensor(epi_done, requires_grad=True).float().view(-1,1)
-        return x, u, r, xn, done
-
-    def train(self):
-        x, u, r, xn, done = self.get_sample()
-        with torch.no_grad():
-            action = self.target_actor(xn)
-            Qn = self.target_critic(torch.cat([xn, action], 1))
-            target = r + (1-done) * self.cfg.ddpg.discount * Qn
-        Q_w_noise_action = self.behavior_critic(torch.cat([x,u], 1))
-        self.critic_optim.zero_grad()
-        critic_loss = self.mse(Q_w_noise_action, target)
-        critic_loss.backward()
-        self.critic_optim.step()
-
-        action_wo_noise = self.behavior_actor(x)
-        Q = self.behavior_critic(torch.cat([x, action_wo_noise],1))
-        self.actor_optim.zero_grad()
-        actor_loss = torch.sum(-Q)
-        actor_loss.backward()
-        self.actor_optim.step()
-
-        softupdate(
-            self.target_actor,
-            self.behavior_actor,
-            self.cfg.ddpg.softupdate)
-        softupdate(
-            self.target_critic,
-            self.behavior_critic,
-            self.cfg.ddpg.softupdate)
-
-    def save_parameters(self, path_save):
-        torch.save({
-            'target_actor': self.target_actor.state_dict(),
-            'target_critic': self.target_critic.state_dict(),
-            'behavior_actor': self.behavior_actor.state_dict(),
-            'behavior_critic': self.behavior_critic.state_dict()
-        }, path_save)
-
-
 def train(agent, des, cfg, noise, env):
     x = env.reset(des)
     noise.reset()
@@ -248,9 +127,9 @@ def train(agent, des, cfg, noise, env):
 
 
 def evaluate(env, agent, des, cfg, dir_env_data, dir_agent_data):
-    env.logger = logging.Logger(dir_env_data)
+    env.logger = fym.Logger(dir_env_data)
     env.logger.set_info(cfg=cfg)
-    logger_agent = logging.Logger(dir_agent_data)
+    logger_agent = fym.Logger(dir_agent_data)
     x = env.reset(des, fixed_init=True)
     while True:
         action = agent.get_action(x)
@@ -264,10 +143,9 @@ def evaluate(env, agent, des, cfg, dir_env_data, dir_agent_data):
     plt.close('all')
 
 
-def main():
-    cfg = load_config()
-    env = MultiQuadSlungLoad(cfg)
-    agent = DDPG(cfg)
+def exp2():
+    env = MultiQuadSlungLoad()
+    agent = DDPG()
     noise = OrnsteinUhlenbeckNoise(
         cfg.noise.rho,
         cfg.noise.mu,
@@ -292,13 +170,115 @@ def main():
     env.close()
 
 
+def run():
+    expcfg = config.load().exp
+
+    class Env(fym.BaseEnv):
+        def __init__(self):
+            super().__init__(**expcfg.sim.kwargs)
+            self.plant = MultiQuadSlungLoad()
+
+            self.logger = fym.Logger(expcfg.path.abspath.envpath)
+            self.logger.set_info(cfg=config.load())
+
+        def step(self):
+            *_, done = self.update()
+            return done
+
+        def set_dot(self, t):
+            fs = [5 * np.clip(quad.pos[2] - (-5), 0, None) for quad in self.plant.quads.systems]
+            Ms = [np.zeros((3, 1))] * self.plant.N
+            self.plant.set_dot(t, fs, Ms)
+
+        def logger_callback(self, t):
+            state_dict = self.observe_dict()
+            quads_dict = state_dict["plant"]["quads"]
+            for k, v in quads_dict.items():
+                v["pos"] = self.plant.quads.systems_dict[k].pos
+
+            return dict(t=t, **state_dict)
+
+    env = Env()
+
+    env.reset()
+    while True:
+        env.render()
+        done = env.step()
+
+        if done:
+            break
+
+    env.close()
+
+
+def exp1():
+    settings = {
+        "exp.path.basedir": "data/exp1",
+        "exp.path.relpath.moviepath": "movie.mp4",
+        "exp.sim.kwargs": dict(dt=0.01, max_t=10),
+        "dynamics.MQSL.quads.num": 8,
+    }
+    config.set(settings)
+    run()
+
+
+def exp1plot():
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    import dvis
+
+    data, info = fym.load("data/exp1/env.h5", with_info=True)
+    cfg = info["cfg"]
+
+    fig = plt.figure()
+    ax = plt.subplot(111, projection="3d")
+
+    quads = {name: dvis.Quadrotor(ax) for name in data["plant"]["quads"]}
+    links = {name: dvis.Link(ax) for name in data["plant"]["links"]}
+    links_cfg = fym.parser.decode(cfg.dynamics.MQSL.links)
+    load = dvis.Load(ax, [links_cfg[name]["anchor"].squeeze()
+                          for name in data["plant"]["links"]])
+
+    def init_func():
+        # set an axis
+        ax.set_xlim3d(-3, 3)
+        ax.set_ylim3d(-3, 3)
+        ax.set_zlim3d(-6, -2)
+        ax.invert_zaxis()
+
+        fig.subplots_adjust(
+            left=0.1, right=0.9, top=0.9, bottom=0.1,
+            wspace=0.2, hspace=0.2)
+
+    def func(frame):
+        x0 = data["plant"]["load"]["pos"][frame]
+        R0 = data["plant"]["load"]["R"][frame]
+
+        load.set(x0.squeeze(), R0)
+
+        for k, v in fym.parser.decode(data["plant"]["quads"]).items():
+            quads[k].set(v["pos"][frame].squeeze(), v["R"][frame])
+
+        for k, v in fym.parser.decode(data["plant"]["links"]).items():
+            start = x0 + R0 @ links_cfg[k]["anchor"]
+            end = start - v["uvec"][frame] * links_cfg[k]["length"]
+            links[k].set(start.squeeze(), end.squeeze())
+
+    fps = 30
+    interval = 1 / fps
+    step = int(interval / cfg.exp.sim.kwargs.dt) + 1
+    interval = step * cfg.exp.sim.kwargs.dt * 1000
+    frames = range(0, data["t"].size, step)
+    ani = dvis.FuncAnimation(fig, init_func=init_func, func=func,
+                             frames=frames, interval=interval)
+    ani.save(cfg.exp.path.abspath.moviepath)
+
+
+def main():
+    exp1()
+    exp1plot()
+
+
 if __name__ == "__main__":
     main()
-
-    past = -1
-    compare_episode(past, ani=True)
-
-    plt.close('all')
-
-
-
